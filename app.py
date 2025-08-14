@@ -50,6 +50,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TDS Data Analyst Agent")
+app.router.redirect_slashes = False 
 
 # Add CORS middleware
 app.add_middleware(
@@ -432,6 +433,7 @@ import pandas as pd
 import numpy as np
 
 @app.post("/api")
+@app.post("/api/")
 async def analyze_data(request: Request):
     try:
         form = await request.form()
