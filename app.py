@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 load_dotenv()
-LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", 180))
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", 300))
 # IMAGE CONVERSION
 try:
     from PIL import Image
@@ -380,12 +380,12 @@ You must:
 1. Follow the provided rules exactly.
 2. Return only a valid JSON object — no extra commentary or formatting.
 3. The JSON must contain:
-   - "questions":  keys provided in the questions file
-   - "code": "..." (Python code that fills `results` with exact type of answer of each question as given in questions file and question keys as keys)\n'
-   - "Note" : the type of each answer should match the type it is asked in question file(e.g. int, float, str, boolean ,base64).
+    - "questions":  keys provided in the questions file
+    - "code": "..." (Python code that fills `results` with exact type of answer of each question as given in questions file and question keys as keys)\n'
+    - "Note" : the type of each answer should match the type it is asked in question file(e.g. int, float, str, boolean ,base64).
 4. Your Python code will run in a sandbox with:
-   - pandas, numpy, matplotlib available
-   - A helper function `plot_to_base64(max_bytes=100000)` for generating base64-encoded images under 100KB.
+    - pandas, numpy, matplotlib available
+    - A helper function `plot_to_base64(max_bytes=100000)` for generating base64-encoded images under 100KB.
 5. When returning plots, always use `plot_to_base64()` to keep image sizes small.
 6. Make sure all variables are defined before use, and the code can run without any undefined references.
 """),
@@ -432,6 +432,7 @@ from io import BytesIO
 import pandas as pd
 import numpy as np
 
+# The corrected analyze_data function
 @app.post("/api")
 @app.post("/api/")
 async def analyze_data(request: Request):
@@ -453,7 +454,6 @@ async def analyze_data(request: Request):
             raise HTTPException(400, "Exactly one .txt questions file is required.")
         questions_file = txt_files[0]
         raw_questions = (await questions_file.read()).decode("utf-8")
-
 
         type_map = {}
         patterns = [
@@ -518,6 +518,26 @@ async def analyze_data(request: Request):
                             raise ValueError("PIL is not available for image processing.")
                     except Exception as e:
                         raise ValueError(f"Failed to process image file: {str(e)}")
+                elif filename.endswith(".pdf"):
+                    import fitz # PyMuPDF
+                    try:
+                        content_bytes = await data_file.read()
+                        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_pdf:
+                            temp_pdf.write(content_bytes)
+                            temp_pdf_path = temp_pdf.name
+
+                        doc = fitz.open(temp_pdf_path)
+                        text = ""
+                        for page in doc:
+                            text += page.get_text()
+
+                        df = pd.DataFrame({"text": [text]})
+                        doc.close()
+                        os.unlink(temp_pdf_path)
+
+                    except Exception as e:
+                        raise ValueError(f"Failed to process PDF file: {str(e)}")
+                
                 else:
                     continue  # unsupported type
             except Exception:
@@ -586,7 +606,6 @@ async def analyze_data(request: Request):
         logger.exception("analyze_data failed")
         raise HTTPException(500, detail=str(e))
 
-
 # -----------------------------
 # Runner: orchestrates agent -> pre-scrape inject -> execute
 # -----------------------------
@@ -598,10 +617,16 @@ def run_agent_safely_unified(llm_input: str, pickle_path: str = None, type_map: 
     - If no pickle_path, falls back to scraping when needed.
     """
     try:
-        response = agent_executor.invoke({"input": llm_input}, {"timeout": LLM_TIMEOUT_SECONDS})
-        raw_out = response.get("output") or response.get("final_output") or response.get("text") or ""
+        max_retries = 4
+        raw_out = ""
+        for attempt in range(1, max_retries + 1):
+            response = agent_executor.invoke({"input": llm_input}, {"timeout": LLM_TIMEOUT_SECONDS})
+            raw_out = response.get("output") or response.get("final_output") or response.get("text") or ""
+            if raw_out:
+                break
+            
         if not raw_out:
-            return {"error": "Agent returned no output"}
+            return {"error": "Agent returned no output after 3 attempts"}
 
         parsed = clean_llm_output(raw_out)
         if "error" in parsed:
@@ -661,4 +686,3 @@ import base64, os
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
-
