@@ -672,9 +672,7 @@ async def analyze_data(request: Request):
         )
 
         if isinstance(result, dict) and result.get("ok"):
-            return JSONResponse(content={
-                "questions": result["results"],
-            }, status_code=200)
+            return JSONResponse(content=result["results"], status_code=200)
 
         # Fallback (error, timeout, or invalid output)
         answers = {k: _default_for(t) for k, t in type_map.items()} if type_map else {}
